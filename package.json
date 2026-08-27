@@ -1,0 +1,87 @@
+{
+  "name": "asdf-preview",
+  "displayName": "ASDF Preview (Roman / JWST quick-look)",
+  "description": "Opens .asdf files in a webview: collapsible metadata tree + zscale-stretched quick-look image, backed by a persistent local Python process.",
+  "version": "0.1.0",
+  "publisher": "local-dev",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "asdf",
+    "roman",
+    "jwst",
+    "astropy",
+    "quick-look",
+    "preview"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCustomEditor:asdfPreview.editor",
+    "onCommand:asdfPreview.reload",
+    "onCommand:asdfPreview.restartBackend"
+  ],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "asdfPreview.editor",
+        "displayName": "ASDF Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.asdf"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "asdfPreview.reload",
+        "title": "ASDF Preview: Reload File"
+      },
+      {
+        "command": "asdfPreview.restartBackend",
+        "title": "ASDF Preview: Restart Python Backend"
+      }
+    ],
+    "configuration": {
+      "title": "ASDF Preview",
+      "properties": {
+        "asdfPreview.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Explicit path to a Python interpreter (>=3.10) for the backend. Empty = auto-detect (asdfPreview env, extension .venv, then PATH). The interpreter must have `asdf` installed."
+        },
+        "asdfPreview.maxImageSide": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 64,
+          "maximum": 4096,
+          "description": "Target maximum side (pixels) for quick-look previews. Larger arrays are stride-downsampled to this size before stretching."
+        },
+        "asdfPreview.requestTimeoutSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 5,
+          "maximum": 600,
+          "description": "Per-request timeout for slow operations (opening large files / rendering images)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "smoke": "python3 testdata/smoke_test.py"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "~1.85.0",
+    "typescript": "^5.5.0"
+  }
+}
