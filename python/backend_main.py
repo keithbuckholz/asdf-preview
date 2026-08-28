@@ -57,6 +57,12 @@ def h_status(_params):
             if _find_spec_ok("astropy")
             else "percentile(2-98) fallback"
         ),
+        # The webview builds its stretch/colormap dropdowns from this, so an
+        # interpreter without matplotlib simply shows 'gray' (no error path).
+        "capabilities": {
+            "stretches": list(imaging.STRETCHES),
+            "cmaps": imaging.available_cmaps(),
+        },
         "pid": os.getpid(),
     }
 
@@ -88,7 +94,8 @@ def h_image(params):
                 "No 2-D image-like array found in this file; showing tree only.",
             )
 
-    return imaging.make_preview(entry.tree, str(array_path), max_side)
+    opts = imaging.validate_render_opts(params)
+    return imaging.make_preview(entry.tree, str(array_path), max_side, opts)
 
 
 def h_close(params):

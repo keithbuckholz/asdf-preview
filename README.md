@@ -5,12 +5,14 @@ ASDF-based data) in VSCode/VSCodium and immediately see:
 
 - a **collapsible tree** of the full metadata (keys, types, values), and
 - if a 2-D image-like array is present (e.g. a Roman WFI `data` array), a
-  **quick-look image**: grayscale, auto-scaled with a proper *zscale* stretch
-  (astropy's `ZScaleInterval` when available), with scroll-to-zoom and drag-to-pan.
+  **quick-look image**: auto-scaled, with scroll-to-zoom and drag-to-pan.
+  Stretch is selectable — *zscale* by default (astropy's `ZScaleInterval`
+  when available), plus linear / percentile / manual bounds and γ — as is the
+  colormap (gray always; matplotlib's cmaps when it is installed).
 
 Everything renders inside a VSCode webview panel — no notebook, no browser tab,
 no JDaviz, no Firefly, no Jupyter kernel. A single small Python backend process
-is started once per session and reused for every file you open.
+starts on first `.asdf` open and is then reused for every file you open.
 
 ```
 ┌─ editor tab ────────────────────────────────────────────────┐
@@ -37,7 +39,8 @@ is started once per session and reused for every file you open.
 | `numpy` (pip) | comes with `asdf` | |
 | `astropy` (pip) | optional | proper zscale stretch (falls back to 2–98 percentile) |
 | `roman_datamodels` (pip) | optional | Roman-aware parsing (tag handlers); clean fallback to plain `asdf` |
-| `Pillow` (pip) | optional | faster PNG encoding; built-in zlib writer is used otherwise |
+| `Pillow` (pip) | optional | faster PNG encoding; **required** for non-gray colormaps — the built-in gray-only zlib writer is used otherwise |
+| `matplotlib` (pip) | optional | named colormaps (viridis, plasma, …); without it only `gray` renders |
 
 **Python auto-detection order:** the `asdfPreview.pythonPath` setting → `$ASDF_PREVIEW_PYTHON`
 → `.venv/` next to the extension → your active `$VIRTUAL_ENV` → `python3`/`python` on PATH
@@ -51,13 +54,14 @@ python3 -m venv .venv
 ./.venv/bin/pip install asdf            # required
 ./.venv/bin/pip install astropy         # recommended: proper zscale
 ./.venv/bin/pip install roman_datamodels asdf-astropy   # optional: Roman products
+./.venv/bin/pip install pillow matplotlib     # optional: colormaps (+ faster PNG)
 #    (on Windows use .venv\Scripts\python instead of ./.venv/bin/python)
 
 # 2. Extension side
 npm install
 npm run compile
 
-# 3. Press F5 ("Run Extension") in VSCode, then open any *.asdf file
+# 3. Press F5 ("Run Extension (ASDF Preview)") in VSCode, then open any *.asdf file
 ```
 
 > If you already have `asdf` installed system-wide (or in the venv VSCode itself
@@ -77,13 +81,19 @@ an opaque workbench assertion.)
 
 ### Using a command-line preview instead of the editor?
 
-The same backend doubles as a tiny CLI:
+The same backend doubles as a tiny CLI (it reuses the exact inspection/imaging
+modules, so what you see matches the webview). Run it with an interpreter that
+has `asdf` (e.g. your `.venv`) and any absolute or relative file path:
 
 ```bash
-python3 python/preview_cli.py /path/to/file.asdf            # summary + tree outline
-python3 python/preview_cli.py file.asdf --out ql.png        # write quick-look PNG
-python3 python/preview_cli.py file.asdf --array pixel_scale # pick a specific array
+python3 python/preview_cli.py file.asdf                  # summary + outline; writes <file>.quicklook.png by default
+python3 python/preview_cli.py file.asdf --no-image       # summary + tree outline only
+python3 python/preview_cli.py file.asdf --out ql.png     # quick-look PNG to a specific path
+python3 python/preview_cli.py file.asdf --array pixel_scale   # pick a specific array
 ```
+
+Other flags: `--max-side N` (default 1024, clamped to 64–4096) and
+`--tree-depth D` (outline depth, default 3); see `--help`.
 
 ## Usage
 
@@ -91,16 +101,24 @@ python3 python/preview_cli.py file.asdf --array pixel_scale # pick a specific ar
    the image follows a moment later if a 2-D array exists.
 2. **Zoom/pan** the image: scroll wheel (zoom at cursor), trackpad pinch, drag to pan.
    `Fit` and `100%` buttons reset the view. The status line shows full shape,
-   downsample factor, stretch bounds and min/max/mean/σ of the *full* array.
+   downsample factor, stretch bounds and min/max/mean/σ of the *full* array
+   (γ and colormap are shown when they differ from defaults).
 3. **Pick another array** with the dropdown (or the "show image" button next to any
    2-D array in the tree) — e.g. preview `dq` or an error array.
-4. Commands:
+4. **Tune the render** with the settings row: stretch (zscale / linear /
+   percentile / manual), colormap, γ, and manual vmin/vmax bounds — changes
+   re-render the current array without re-parsing. Non-gray colormaps need
+   `matplotlib` in the backend interpreter.
+5. Commands:
    - `ASDF Preview: Reload File` — re-read from disk (files also auto-reload when changed).
    - `ASDF Preview: Restart Python Backend` — force a backend respawn (after fixing env issues).
-5. Settings (`asdfPreview.*`):
-   - `pythonPath` — pin a specific interpreter.
-   - `maxImageSide` — preview resolution cap (default 1024 px).
-   - `requestTimeoutSeconds` — timeout for slow opens/renders (default 60 s).
+6. Settings (`asdfPreview.*`):
+   - `pythonPath` — pin a specific interpreter (empty by default = auto-detect;
+     see the detection order under Requirements).
+   - `maxImageSide` — max preview side in pixels (default 1024, range 64–4096);
+     larger arrays are stride-downsampled to it.
+   - `requestTimeoutSeconds` — per-request timeout for slow opens/renders
+     (default 60 s, range 5–600).
 
 ### Performance
 
@@ -146,6 +164,33 @@ Then `ASDF Preview: Restart Python Backend`.
 | `E_PARSE … tag:…gwcs…` / unknown model type | Install `gwcs` (and/or `roman_datamodels`) into the backend interpreter, then restart the backend. |
 | Tree appears but image says nothing to render | File genuinely has no 2-D array — the tree is still fully usable. |
 
+## Testing
+
+- `npm run smoke` — end-to-end wire-protocol test against the real backend
+  (handshake, cold/hot opens, tree caps, stretch/colormap options, PNG validity,
+  error paths, clean shutdown). It uses your PATH `python3`; if that lacks
+  `asdf`, run `.venv/bin/python testdata/smoke_test.py` instead.
+- `testdata/generate.py` — regenerates the fixtures `small.asdf` (~1 MB) and
+  `big.asdf` (~109 MB): `.venv/bin/python testdata/generate.py`.
+- `test/host_sim.js` — drives the compiled manager (and editor provider) against
+  the real backend in plain Node, including SIGKILL → auto-respawn. Run after
+  `npm run compile`: `node test/host_sim.js`.
+
+Coverage table and rationale: DEVELOPMENT.md §7.
+
+## Packaging / release
+
+Shippable `.vsix` builds are supported (`@vscode/vsce` is a devDependency; the
+repo keeps exactly one versioned artifact at the root). From the repo root:
+
+```bash
+rm -f asdf-preview-0.*.vsix                                    # drop stale artifacts first
+npx vsce package --allow-missing-repository --skip-license     # -> asdf-preview-<version>.vsix
+codium --install-extension $PWD/asdf-preview-<new>.vsix        # then Developer: Reload Window
+```
+
+Full procedure, and how to verify what actually got installed: DEVELOPMENT.md §7a.
+
 ## Repository layout
 
 ```
@@ -156,12 +201,12 @@ src/            TypeScript extension host
 python/         persistent Python backend
   protocol.py   framing + error model
   inspection.py ASDF opening, LRU cache, tree serialization
-  imaging.py    downsample → zscale → 8-bit → PNG
+  imaging.py    downsample → stretch → 8-bit → PNG (+ full-array stats)
   backend_main.py request loop (entry point)
   preview_cli.py terminal quick-look CLI
 media/          webview assets (style.css, main.js — no external dependencies)
-testdata/       fixture generator + pipe-level smoke test
-test/host_sim.js Node harness driving the compiled manager against the real backend
+testdata/       fixture generator, generated fixtures (small/big .asdf) + pipe-level smoke test
+test/host_sim.js Node harness driving the compiled manager + editor provider against the real backend
 ```
 
 See DEVELOPMENT.md for the wire protocol spec and design rationale.

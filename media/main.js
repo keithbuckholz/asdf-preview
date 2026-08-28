@@ -31,6 +31,11 @@ const els = {
   zoomPct: $('zoom-pct'),
   btnExpandAll: $('btn-expand-all'),
   btnCollapseAll: $('btn-collapse-all'),
+  selStretch: $('sel-stretch'),
+  selCmap: $('sel-cmap'),
+  inGamma: $('in-gamma'),
+  inVmin: $('in-vmin'),
+  inVmax: $('in-vmax'),
 };
 
 const ctx = els.canvas.getContext('2d');
@@ -49,6 +54,9 @@ window.addEventListener('message', (e) => {
   switch (m.kind) {
     case 'status':
       if (m.phase === 'loading') enterLoading();
+      break;
+    case 'env':
+      fillCapabilities(m.env && m.env.capabilities);
       break;
     case 'tree':
       onTree(m.record);
@@ -331,7 +339,67 @@ function selectAndRequest(arrayPath) {
   els.arraySelect.value = arrayPath;
   showPlaceholder('<span class="spinner"></span>', `rendering ${arrayPath}…`);
   setImageStatus('');
-  vscode.postMessage({ type: 'image', array: arrayPath });
+  vscode.postMessage({ type: 'image', array: arrayPath, opts: readOpts() });
+}
+
+/* ------------------------------------------------- image settings (row 2) */
+
+// Read the current settings row into a backend-contract object. Empty
+// vmin/vmax fields are omitted (backend treats "both present" as manual).
+function readOpts() {
+  const opts = {
+    stretch: els.selStretch.value,
+    cmap: els.selCmap.value,
+  };
+  const g = parseFloat(els.inGamma.value);
+  if (Number.isFinite(g)) opts.gamma = g;
+  for (const [field, key] of [[els.inVmin, 'vmin'], [els.inVmax, 'vmax']]) {
+    if (field.value.trim() !== '') {
+      const v = parseFloat(field.value);
+      if (Number.isFinite(v)) opts[key] = v;
+    }
+  }
+  return opts;
+}
+
+function requestWithOpts() {
+  const array = els.arraySelect.value;
+  if (!array || els.arraySelect.disabled) return; // nothing to re-render
+  showPlaceholder('<span class="spinner"></span>', 're-rendering…');
+  vscode.postMessage({ type: 'image', array, opts: readOpts() });
+}
+
+// Backend told us which stretches/colormaps this interpreter supports.
+function fillCapabilities(caps) {
+  if (!caps) return; // keep built-in defaults (zscale/gray)
+  const apply = (sel, values, fallback) => {
+    if (!Array.isArray(values) || values.length === 0) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    for (const v of values) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v;
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+    else sel.value = fallback;
+  };
+  apply(els.selStretch, caps.stretches, 'zscale');
+  apply(els.selCmap, caps.cmaps, 'gray');
+}
+
+els.selStretch.addEventListener('change', requestWithOpts);
+els.selCmap.addEventListener('change', requestWithOpts);
+els.inGamma.addEventListener('change', requestWithOpts);
+// Typing a bound implies manual stretch; the backend enforces the pair.
+for (const el of [els.inVmin, els.inVmax]) {
+  el.addEventListener('focus', () => {
+    if (els.selStretch.value !== 'manual' &&
+        [...els.selStretch.options].some((o) => o.value === 'manual')) {
+      els.selStretch.value = 'manual';
+    }
+  });
+  el.addEventListener('change', requestWithOpts);
 }
 
 // constant mirrors python/inspection.py MAX_LIST_ITEMS (for badge tooltips)
@@ -352,10 +420,16 @@ function onImage(payload) {
 
   const img = new Image();
   showPlaceholder('<span class="spinner"></span>', 'decoding preview…');
+  const prevMeta = state.image ? state.image.meta : null;
   img.onload = () => {
     state.image = { img, meta: payload };
     hidePlaceholder();
-    if (!state.userTransformed) fitToPane(); else draw();
+    // Same raster dimensions (a settings tweak of the current array) -> keep
+    // the user's zoom/pan; a different array/resolution -> fit again.
+    const sameDims = prevMeta &&
+      prevMeta.width === payload.width && prevMeta.height === payload.height;
+    if (!sameDims) { state.userTransformed = false; fitToPane(); }
+    else draw();
     setImageStatus(payload);
     updateZoomPct();
   };
@@ -451,6 +525,8 @@ function setImageStatus(meta) {
     `full ${meta.full_shape.join('×')}`,
     meta.downsample_factor.some((f) => f > 1) ? `stride ${meta.downsample_factor.join('×')}` : null,
     `stretch: ${meta.stretch.algorithm} [${fmt(meta.stretch.vmin)}, ${fmt(meta.stretch.vmax)}]`,
+    (meta.stretch.gamma ?? 1) !== 1 ? `γ=${meta.stretch.gamma}` : null,
+    meta.stretch.cmap && meta.stretch.cmap !== 'gray' ? `cmap: ${meta.stretch.cmap}` : null,
     st.min !== null && st.max !== null ? `min ${fmt(st.min)}  max ${fmt(st.max)}` : null,
     st.mean !== null ? `mean ${fmt(st.mean)}  σ ${fmt(st.std)}` : null,
     meta.note || null,

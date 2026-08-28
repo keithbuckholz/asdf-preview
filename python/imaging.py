@@ -24,7 +24,7 @@ Design notes
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -144,16 +144,19 @@ def prepare(arr: Any, max_side: int) -> Tuple[np.ndarray, Tuple[int, int], np.nd
     return work, (sh, sw), full_f32
 
 
-def to_u8(work: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
+def to_u8(work: np.ndarray, vmin: float, vmax: float, gamma: float = 1.0) -> np.ndarray:
     """Clip+normalize *work* to 8-bit gray.
 
     Non-finite values are mapped to the nearest bound (NaN -> dark), so a
     DNaN-eroded corner renders as background rather than blowing out the
-    stretch or producing white speckle.
+    stretch or producing white speckle. ``gamma`` is applied to the
+    normalized value (1.0 = no change; <1 lifts shadows, >1 crushes them).
     """
     w = np.nan_to_num(work, nan=vmin, posinf=vmax, neginf=vmin)
-    scaled = (w - vmin) * (255.0 / (vmax - vmin))
-    u8 = np.clip(scaled, 0.0, 255.0)
+    norm = (w - vmin) * (1.0 / (vmax - vmin))
+    if gamma != 1.0:
+        norm = np.power(np.clip(norm, 0.0, 1.0), gamma)
+    u8 = np.clip(norm * 255.0, 0.0, 255.0)
     return np.rint(u8).astype(np.uint8)
 
 
@@ -220,6 +223,27 @@ def encode_png(u8: np.ndarray) -> bytes:
         return _manual_png(u8, h, w)
 
 
+def encode_png_rgb(rgb: np.ndarray) -> bytes:
+    """Encode an (h, w, 3) uint8 array. No built-in RGB writer exists (the
+    zero-dependency path is gray only), so Pillow is required for cmaps."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        buf = BytesIO()
+        Image.fromarray(np.ascontiguousarray(rgb), mode="RGB").save(
+            buf, format="PNG", compress_level=6
+        )
+        return buf.getvalue()
+    except ImportError as exc:
+        raise PreviewError(
+            protocol.E_BAD_REQUEST,
+            "Colormaps require Pillow in the backend interpreter. "
+            "Run `pip install pillow` there, or use cmap 'gray'.",
+        ) from exc
+
+
 def _manual_png(u8: np.ndarray, h: int, w: int) -> bytes:
     import struct
     import zlib
@@ -245,8 +269,122 @@ def _manual_png(u8: np.ndarray, h: int, w: int) -> bytes:
 # High-level entry used by the backend's `image` handler
 # ---------------------------------------------------------------------------
 
-def make_preview(tree: Any, dotted_path: str, max_side: int = 1024) -> Dict[str, Any]:
+# ----------------------------------------------------------------- user opts
+
+STRETCHES = ("zscale", "linear", "percentile", "manual")
+_CMAP_PREFERRED = ("viridis", "plasma", "inferno", "magma", "turbo", "cividis")
+_lut_cache: Dict[str, np.ndarray] = {}
+
+
+def available_cmaps() -> List[str]:
+    """'gray' is always available; the standard astro colormaps come from
+    matplotlib's data files when it is installed (optional dependency). The
+    UI builds its dropdown from status.capabilities, so a minimal interpreter
+    simply shows 'gray' without erroring."""
+    out = ["gray"]
+    try:
+        import matplotlib  # optional: never hard-required
+
+        for name in _CMAP_PREFERRED:
+            if name in matplotlib.colormaps:
+                out.append(name)
+    except Exception:
+        pass
+    return out
+
+
+def cmap_lut(name: str) -> np.ndarray:
+    """256x3 uint8 lookup table for *name* (cached after first build)."""
+    if name in _lut_cache:
+        return _lut_cache[name]
+    if name == "gray":
+        g = np.arange(256, dtype=np.uint8)
+        lut = np.stack([g, g, g], axis=1)
+    else:
+        try:
+            import matplotlib
+        except ImportError as exc:
+            raise PreviewError(
+                protocol.E_BAD_REQUEST,
+                f"Colormap {name!r} needs matplotlib in the backend interpreter "
+                "(pip install matplotlib), or use cmap 'gray'.",
+            ) from exc
+        try:
+            cm = matplotlib.colormaps[name]
+        except Exception as exc:
+            raise PreviewError(
+                protocol.E_BAD_REQUEST,
+                f"Unknown colormap {name!r}; supported: "
+                f"{', '.join(available_cmaps())}",
+            ) from exc
+        lut = np.rint(cm(np.linspace(0.0, 1.0, 256))[:, :3] * 255.0)
+        lut = np.clip(lut, 0, 255).astype(np.uint8)
+    _lut_cache[name] = lut
+    return lut
+
+
+def validate_render_opts(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate user image settings out of 'image' params.
+
+    Returns {stretch, gamma, cmap, vmin, vmax}. Providing both a finite vmin
+    and vmax (vmax > vmin) acts as a manual override regardless of stretch;
+    half-provided bounds are rejected so the contract stays unambiguous.
+    """
+
+    def _num(key: str) -> Optional[float]:
+        v = params.get(key)
+        if v is None:
+            return None
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            raise PreviewError(protocol.E_BAD_REQUEST, f'"{key}" must be a number')
+        if not math.isfinite(v):
+            raise PreviewError(protocol.E_BAD_REQUEST, f'"{key}" must be finite')
+        return v
+
+    stretch = params.get("stretch", "zscale")
+    if stretch not in STRETCHES:
+        raise PreviewError(
+            protocol.E_BAD_REQUEST,
+            f"Unknown stretch {stretch!r}; use one of: {', '.join(STRETCHES)}",
+        )
+    gamma = _num("gamma")
+    if gamma is None:
+        gamma = 1.0
+    if not (0.05 <= gamma <= 10.0):
+        raise PreviewError(
+            protocol.E_BAD_REQUEST, '"gamma" must be between 0.05 and 10'
+        )
+    cmap = str(params.get("cmap", "gray"))
+    if cmap not in available_cmaps():
+        extra = " (matplotlib not installed -> only 'gray' available)" \
+            if len(available_cmaps()) == 1 else ""
+        raise PreviewError(
+            protocol.E_BAD_REQUEST,
+            f"Colormap {cmap!r} unavailable; supported: "
+            f"{', '.join(available_cmaps())}{extra}",
+        )
+    vmin, vmax = _num("vmin"), _num("vmax")
+    if (vmin is None) != (vmax is None):
+        raise PreviewError(
+            protocol.E_BAD_REQUEST, "Provide both vmin and vmax (or neither)"
+        )
+    if vmin is not None and vmax <= vmin:
+        raise PreviewError(protocol.E_BAD_REQUEST, '"vmax" must be > "vmin"')
+    return {"stretch": stretch, "gamma": gamma, "cmap": cmap, "vmin": vmin, "vmax": vmax}
+
+
+def make_preview(
+    tree: Any,
+    dotted_path: str,
+    max_side: int = 1024,
+    opts: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Full pipeline for one 2-D array. Returns a JSON-safe result dict."""
+    if opts is None:
+        opts = {"stretch": "zscale", "gamma": 1.0, "cmap": "gray",
+                "vmin": None, "vmax": None}
     node = find_array(tree, dotted_path)
     if is_quantity(node):
         arr_plain = np.asarray(node.value)
@@ -263,8 +401,18 @@ def make_preview(tree: Any, dotted_path: str, max_side: int = 1024) -> Dict[str,
     work, strides, full_f32 = prepare(arr_plain, max_side)
 
     sample = finite_sample(work)
-    zr = zrange(sample)
-    if zr is None:
+    fin = sample[np.isfinite(sample)]
+
+    def _meta(algo: str, lo: float, hi: float) -> Dict[str, Any]:
+        return {
+            "algorithm": algo,
+            "vmin": _r6(lo),
+            "vmax": _r6(hi),
+            "gamma": opts["gamma"],
+            "cmap": opts["cmap"],
+        }
+
+    if fin.size == 0:
         # No finite values at all: emit a blank (black) frame + explanation.
         u8 = np.zeros(work.shape, dtype=np.uint8)
         png_bytes = encode_png(u8)
@@ -277,15 +425,34 @@ def make_preview(tree: Any, dotted_path: str, max_side: int = 1024) -> Dict[str,
             "height": int(work.shape[0]),
             "full_shape": list(arr_plain.shape),
             "downsample_factor": list(strides),
-            "stretch": {"algorithm": "none", "vmin": None, "vmax": None},
+            "stretch": {**_meta("none", 0.0, 1.0), "vmin": None, "vmax": None},
             "stats": full_stats(full_f32),
             "note": "array contains no finite values; image shown as black",
         }
 
-    vmin, vmax, algo = zr
+    # --- stretch bounds -------------------------------------------------
+    if opts["vmin"] is not None and opts["vmax"] is not None:
+        vmin, vmax, algo = float(opts["vmin"]), float(opts["vmax"]), "manual"
+    elif opts["stretch"] == "linear":
+        vmin, vmax = float(fin.min()), float(fin.max())
+        algo = "linear (data min/max)"
+    elif opts["stretch"] == "percentile":
+        p2, p98 = np.percentile(fin, [2, 98])
+        vmin, vmax, algo = float(p2), float(p98), "percentile(2-98)"
+    else:  # zscale (default)
+        zr = zrange(sample)
+        if zr is None:
+            raise PreviewError(protocol.E_INTERNAL, "stretch produced no bounds")
+        vmin, vmax, algo = zr
+
     lo, hi = _widen(vmin, vmax)
-    u8 = to_u8(work, lo, hi)
-    png_bytes = encode_png(u8)
+    u8 = to_u8(work, lo, hi, gamma=opts["gamma"])
+
+    if opts["cmap"] == "gray":
+        png_bytes = encode_png(u8)
+    else:
+        rgb = cmap_lut(opts["cmap"])[u8]  # (h, w, 3) via lookup: cheap even at 4k^2
+        png_bytes = encode_png_rgb(rgb)
 
     import base64
 
@@ -296,6 +463,6 @@ def make_preview(tree: Any, dotted_path: str, max_side: int = 1024) -> Dict[str,
         "height": int(work.shape[0]),
         "full_shape": list(arr_plain.shape),
         "downsample_factor": list(strides),
-        "stretch": {"algorithm": algo, "vmin": _r6(lo), "vmax": _r6(hi)},
+        "stretch": _meta(algo, lo, hi),
         "stats": full_stats(full_f32),
     }

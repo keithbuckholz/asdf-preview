@@ -71,6 +71,11 @@ def main() -> int:
           f"roman={s.get('has_roman_datamodels')} stretch={s.get('stretch_backend')} "
           f"(first response after spawn: {dt:.2f}s)")
     check("asdf available", s.get("asdf") is not None)
+    caps = s.get("capabilities", {})
+    check("status reports capabilities",
+          "zscale" in caps.get("stretches", [])
+          and "manual" in caps.get("stretches", [])
+          and (caps.get("cmaps") or ["gray"])[0] == "gray")
 
     print("== open small (cold parse) ==")
     t0 = time.perf_counter()
@@ -135,6 +140,62 @@ def main() -> int:
     check("explicit array ok", r["ok"], json.dumps(r)[:200])
     if r.get("ok"):
         check("explicit dims", r["result"].get("width") == 64)
+
+    print("== render options (stretch / gamma / manual bounds / cmaps) ==")
+    r_def = req("image", {"path": small})  # default zscale gray, for comparisons
+    png_zscale = base64.b64decode(r_def["result"]["png"])
+
+    r = req("image", {"path": small, "stretch": "linear"})
+    check("linear ok + different pixels",
+          r["ok"] and r["result"]["png"] != r_def["result"]["png"]
+          and r["result"]["stretch"]["algorithm"].startswith("linear"),
+          json.dumps(r)[:200])
+
+    r = req("image", {"path": small, "stretch": "percentile"})
+    check("percentile ok + labeled",
+          r["ok"] and "percentile" in r["result"]["stretch"]["algorithm"])
+
+    r = req("image", {"path": small, "gamma": 2.0})
+    check("gamma changes pixels + echoed in meta",
+          r["ok"] and r["result"]["png"] != png_zscale
+          and r["result"]["stretch"].get("gamma") == 2.0)
+
+    lo, hi = r_def["result"]["stretch"]["vmin"], r_def["result"]["stretch"]["vmax"]
+    r = req("image", {"path": small, "vmin": lo, "vmax": hi})
+    check("manual bounds override + labeled",
+          r["ok"] and r["result"]["stretch"]["algorithm"] == "manual",
+          json.dumps(r)[:200])
+
+    cmap_names = caps.get("cmaps", ["gray"])
+    r = req("image", {"path": small, "cmap": "does-not-exist"})
+    check("unknown cmap -> E_BAD_REQUEST listing supported",
+          not r["ok"] and r["error"]["code"] == "E_BAD_REQUEST"
+          and "gray" in r["error"]["message"])
+    if len(cmap_names) > 1:
+        cname = cmap_names[1]
+        r = req("image", {"path": small, "cmap": cname})
+        check(f"cmap {cname} ok + echoed in meta",
+              r["ok"] and r["result"]["stretch"].get("cmap") == cname,
+              json.dumps(r)[:200])
+        try:
+            from PIL import Image as _PILImage
+
+            im = _PILImage.open(io.BytesIO(base64.b64decode(r["result"]["png"])))
+            check(f"cmap png decodes as RGB {im.size}", im.mode == "RGB")
+        except ImportError:
+            print("  [skip] PIL not available for cmap decode check")
+    else:
+        print("  [note] matplotlib absent -> only 'gray' (graceful path)")
+
+    r = req("image", {"path": small, "stretch": "log"})
+    check("bad stretch -> E_BAD_REQUEST",
+          not r["ok"] and r["error"]["code"] == "E_BAD_REQUEST")
+    r = req("image", {"path": small, "vmin": 1.0})
+    check("half-provided bounds -> E_BAD_REQUEST",
+          not r["ok"] and r["error"]["code"] == "E_BAD_REQUEST")
+    r = req("image", {"path": small, "vmin": 5.0, "vmax": 1.0})
+    check("inverted bounds -> E_BAD_REQUEST",
+          not r["ok"] and r["error"]["code"] == "E_BAD_REQUEST")
 
     print("== big file: cold open + downsampled image ==")
     t0 = time.perf_counter()

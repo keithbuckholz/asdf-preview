@@ -9,12 +9,13 @@ Contributor-facing document. The user guide lives in [README.md](README.md).
  ┌──────────────────────────────────────┐          ┌────────────────────────────────────────┐
  │ AsdfEditorProvider (src/editor.ts)   │  spawn   │ python/backend_main.py                 │
  │   • CustomReadonlyEditorProvider     ├─────────▶│   request loop (single thread)         │
- │   • webview panel + messages         │ stdin ──▶│   h_status / h_open / h_image / h_close│
+ │   • webview panel + messages         │ stdin ──▶│   h_status / h_ping / h_open /         │
+ │                                      │          │            h_image / h_close           │
  │ BackendManager (src/backend/manager) │          │        │                               │
  │   • python detection, lifecycle      │ stdout ◀─┤        ├─ inspection.py  (open, LRU    │
  │   • restart throttling, status bar   │   JSONL  │        │        cache, tree serialize) │
  │ BackendProcess (src/backend/client)  │          │        └─ imaging.py     (downsample → │
- │   • line framing, id-matching,       │          │            zscale → u8 → PNG)          │
+ │   • line framing, id-matching,       │          │             stretch → u8/cmap → PNG)   │
  │   • timeouts, orphan-frame drops     │          │                                          │
  └──────────────┬───────────────────────┘          └────────────────────────────────────────┘
                 │ postMessage (tree JSON / base64 PNG / errors)
@@ -96,6 +97,8 @@ Rules:
 { "python": "3.14.7", "asdf": "5.3.1" | null, "numpy": "2.5.2",
   "has_roman_datamodels": false,
   "stretch_backend": "astropy ZScaleInterval" | "percentile(2-98) fallback",
+  "capabilities": { "stretches": ["zscale","linear","percentile","manual"],
+                    "cmaps": ["gray"] },   // cmaps: matplotlib's names when installed
   "pid": 1234 }
 ```
 
@@ -114,7 +117,7 @@ Rules:
   "truncated": false,                            // node cap hit during serialization?
   "arrays": [                                    // document-order catalog of every ndarray
     { "path": "data", "shape": [4096, 4096], "dtype": "float32", "nbytes": 67108864,
-      "previewable": true, "recommended": true } ],
+      "masked": false, "previewable": true, "recommended": true } ],
   "preview_array": "data" | null }               // first previewable in document order
 ```
 
@@ -122,15 +125,28 @@ Caching: if the file's `(mtime_ns, size)` matches a cached entry, the same seria
 record is returned without re-parsing. LRU evicts beyond 4 entries (closes the `AsdfFile`).
 
 `image` — params: `path`, optional `array_path` (defaults to `preview_array`),
-optional `max_side` (int, clamped to 64–4096). Result:
+optional `max_side` (int, clamped to 64–4096). All render options are optional;
+the backend validates them and answers `E_BAD_REQUEST` with an actionable
+message on anything out of contract:
+
+- `stretch` ∈ `zscale` (default) / `linear` (data min/max) / `percentile`
+  (2/98) / `manual`;
+- `gamma` — number in 0.05–10, default 1 (applied to the normalized value);
+- `cmap` — one of `status.capabilities.cmaps` (`gray` always; matplotlib's
+  names when installed), default `gray`;
+- `vmin`, `vmax` — both or neither, `vmax > vmin`; providing both acts as a
+  manual override regardless of `stretch`.
+
+Result:
 
 ```jsonc
 { "array_path": "data",
-  "png": "<base64, 8-bit grayscale>",
+  "png": "<base64 PNG; 8-bit gray, or RGB when a non-gray cmap is used>",
   "width": 1024, "height": 1024,                  // rendered (downsampled) size
   "full_shape": [4096, 4096],
   "downsample_factor": [4, 4],
-  "stretch": { "algorithm": "astropy ZScaleInterval", "vmin": 0.0186, "vmax": 0.201 },
+  "stretch": { "algorithm": "astropy ZScaleInterval", "vmin": 0.0186, "vmax": 0.201,
+               "gamma": 1.0, "cmap": "gray" },
   "stats": { "min": -0.025, "max": 3.214, "mean": 0.082, "std": 0.0599,
              "finite_fraction": 0.9961, "sampled": false },   // over the FULL array
   "note": "optional, e.g. 'array contains no finite values'" }
@@ -209,15 +225,18 @@ State machine in `src/backend/manager.ts`:
 
 For a selected array `a` (H×W):
 
-1. **Validate.** ndim must be 2, dtype kind in `{f,i,u,b}`, non-empty; complex/other →
+1. **Validate.** ndim must be 2, dtype kind in `{f,i,u}`, non-empty; bool/complex/other →
    `E_BAD_ARRAY`. Quantities are unit-stripped; masked arrays use `.data` (v1).
 2. **Stride downsample** to ≤ `max_side` (default 1024):
    `sh = ceil(H/max_side)`, `sw = ceil(W/max_side)`, view `a[::sh, ::sw]`. Striding is a
    zero-copy view — the only allocations are the contiguous float32 working copy and the
    output u8 array. (Block averaging would look slightly nicer but costs a full pass;
    striding keeps warm re-renders ~75 ms for 4096² frames.)
-3. **Zscale bounds.** Sample ≤ 1 M finite values from the downsampled array (a stride-4
-   4096² frame gives ≈ 1 M points — good coverage, cheap) and run astropy's
+3. **Stretch bounds.** Bounds come from the requested `stretch` (default `zscale`;
+   alternatives: `linear` = data min/max, `percentile` = 2/98 percentiles,
+   `manual` = the client's `vmin`/`vmax`). For `zscale`: sample ≤ 1 M finite
+   values from the downsampled array (a stride-4 4096² frame gives ≈ 1 M points
+   — good coverage, cheap) and run astropy's
    `ZScaleInterval` (`get_limits` on astropy ≥ 8, `bounds` before). Zscale iteratively
    tightens min/max with robust clipping, so a handful of PSF pixels can't wash out the
    background — this is why we don't use naive percentiles when astropy is present.
@@ -225,11 +244,12 @@ For a selected array `a` (H×W):
    Constant/degenerate arrays get ±max(1, 5%·|mid|) bounds so they render gray instead of
    clipping to black/white.
 4. **Stretch.** Non-finite values are mapped to the nearest bound (NaN → dark, not white
-   speckle), then linear map `(v - vmin) * 255 / (vmax - vmin)` clipped to `[0,255]`.
-   Linear power-law in v1; a gamma/exposure toggle is an easy later addition.
+   speckle), then linear map `(v - vmin) * 255 / (vmax - vmin)` clipped to `[0,255]`,
+   with the optional user γ (default 1.0) applied to the normalized value.
 5. **Encode.** 8-bit grayscale PNG via Pillow if importable, else a built-in ~30-line
    writer (zlib + manual IHDR/IDAT/IEND) — so the backend has *zero* hard dependencies
-   beyond `asdf`.
+   beyond `asdf`. A non-gray colormap is applied as a 256-entry LUT and encoded as
+   RGB; that path requires Pillow (the built-in writer is gray-only).
 
 Stats (min/max/mean/σ, nan-aware) are computed over the **full** array (up to 50 M elements;
 beyond that a strided subsample is used and flagged `sampled: true`) — so the status line
@@ -253,11 +273,27 @@ describes the real data, not just the preview.
 | Test | What it covers | How |
 |---|---|---|
 | `testdata/generate.py` | builds `small.asdf` (~1 MB) + `big.asdf` (~109 MB, NaN corner, PSF blob) | `.venv/bin/python testdata/generate.py` |
-| `testdata/smoke_test.py` | the whole wire protocol over real pipes: handshake, open (cold/hot timing), tree caps, zscale, PNG validity, all error paths, malformed-line robustness, clean shutdown | `.venv/bin/python testdata/smoke_test.py` |
-| `test/host_sim.js` | the compiled TS manager against the real backend: python detection, spawn+handshake, crash (SIGKILL) → auto-respawn, restart command | `node test/host_sim.js` (after `npm run compile`) |
+| `testdata/smoke_test.py` | the whole wire protocol over real pipes: handshake, open (cold/hot timing), tree caps, zscale + render options (stretch/γ/bounds/cmaps), PNG validity, all error paths, malformed-line robustness, clean shutdown | `.venv/bin/python testdata/smoke_test.py` |
+| `test/host_sim.js` | the compiled TS manager against the real backend: python detection, spawn+handshake, crash (SIGKILL) → auto-respawn, restart command, editor-provider open/resolve/dispose + webview HTML | `node test/host_sim.js` (after `npm run compile`) |
 
 Suggested additions when you extend this: pytest for the imaging math (zrange invariants,
 stride factors), and a fixture with real Roman tags to exercise the roman_datamodels path.
+
+## 7a. Packaging (vsix)
+
+Always keep **exactly one** installable artifact in the repo root — a stale
+versioned vsix next to the new one has caused a wrong-version install before
+(0.1.0 silently reinstalled over 0.1.1, resurrecting a fixed bug):
+
+```bash
+rm -f asdf-preview-0.*.vsix            # drop old artifacts first
+npx vsce package --allow-missing-repository --skip-license
+codium --install-extension $PWD/asdf-preview-<new>.vsix   # then reload the window
+```
+
+Verify what actually got installed: the ASDF Preview output channel logs
+`ASDF Preview v<version> activated from <path>` — if it shows an old version,
+disk and memory disagree (check `~/.vscode-oss/extensions/local-dev.asdf-preview-*`).
 
 ## 8. Extending for cubes / spectra later
 

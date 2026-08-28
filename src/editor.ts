@@ -14,7 +14,14 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 import { BackendManager } from "./backend/manager";
-import { BackendError, ImageResult, OpenRecord, ERROR_CODES } from "./backend/types";
+import {
+  BackendError,
+  ImageResult,
+  OpenRecord,
+  StatusResult,
+  RenderOpts,
+  ERROR_CODES,
+} from "./backend/types";
 
 const VIEW_TYPE = "asdfPreview.editor";
 
@@ -29,6 +36,7 @@ export class AsdfCustomDocument implements vscode.CustomDocument {
 interface WebviewMsgIn {
   type?: string;
   array?: unknown;
+  opts?: Partial<RenderOpts>;
 }
 
 export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, vscode.Disposable {
@@ -205,11 +213,21 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
           const maxSide = vscode.workspace
             .getConfiguration("asdfPreview")
             .get<number>("maxImageSide", 1024);
-          const payload = await this.backend.request<ImageResult>("image", {
+          // Forward user image settings; the backend validates (E_BAD_REQUEST
+          // with an actionable message on anything out of contract).
+          const params: Record<string, unknown> = {
             path: uri.fsPath,
             array_path: msg.array,
             max_side: maxSide,
-          });
+          };
+          const o = msg.opts || {};
+          if (typeof o.stretch === "string") params.stretch = o.stretch;
+          if (typeof o.cmap === "string") params.cmap = o.cmap;
+          for (const k of ["gamma", "vmin", "vmax"] as const) {
+            const v = o[k];
+            if (typeof v === "number" && Number.isFinite(v)) params[k] = v;
+          }
+          const payload = await this.backend.request<ImageResult>("image", params);
           this.post(panel, { kind: "image", scope: "image", payload });
         } catch (err) {
           this.postError(panel, "image", err);
@@ -224,6 +242,12 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
   /** Open (or re-open) *uri*: push tree first, image right after. */
   private async load(uri: vscode.Uri, panel: vscode.WebviewPanel): Promise<void> {
     this.post(panel, { kind: "status", phase: "loading" });
+    // Backend capabilities (stretch/colormap lists) for the settings row.
+    // Fire-and-forget: a failure here must never block opening the file.
+    this.backend
+      .request<StatusResult>("status", {})
+      .then((env) => this.post(panel, { kind: "env", env }))
+      .catch(() => {/* settings row keeps its built-in defaults */});
     try {
       const rec = await this.backend.request<OpenRecord>("open", { path: uri.fsPath });
       // 1) tree immediately -- cached re-opens land in <5ms server-side.
@@ -322,8 +346,20 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
           <label for="array-select">array</label>
           <select id="array-select" disabled><option value="">–</option></select>
           <span class="spacer"></span>
-          <button id="btn-fit" title="Fit image to pane">Fit</button>
+          <button id="btn-fit" title="Fit image to pane">fit</button>
           <button id="btn-100" title="1:1 pixels">100%</button>
+        </div>
+        <div id="image-settings">
+          <label for="sel-stretch" title="Stretch algorithm">stretch</label>
+          <select id="sel-stretch"><option value="zscale">zscale</option></select>
+          <label for="sel-cmap" title="Colormap">cmap</label>
+          <select id="sel-cmap"><option value="gray">gray</option></select>
+          <label for="in-gamma" title="Gamma on normalized values: &lt;1 lifts shadows, &gt;1 crushes them">γ</label>
+          <input id="in-gamma" type="number" min="0.2" max="3" step="0.1" value="1">
+          <label for="in-vmin" title="Manual bounds: filling either switches stretch to manual">vmin</label>
+          <input id="in-vmin" type="number" placeholder="auto" title="manual vmin">
+          <label for="in-vmax" title="Manual bounds">vmax</label>
+          <input id="in-vmax" type="number" placeholder="auto" title="manual vmax">
         </div>
         <div id="canvas-wrap">
           <canvas id="canvas"></canvas>

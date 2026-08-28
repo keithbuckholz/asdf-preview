@@ -47,7 +47,18 @@ export interface StatusResult {
   numpy: string | null;
   has_roman_datamodels: boolean;
   stretch_backend: "astropy ZScaleInterval" | "percentile(2-98) fallback";
+  /** UI builds its dropdowns from this; a minimal interpreter reports only 'gray'. */
+  capabilities?: { stretches: string[]; cmaps: string[] };
   pid: number;
+}
+
+/** Optional user image settings forwarded to the backend `image` method. */
+export interface RenderOpts {
+  stretch?: "zscale" | "linear" | "percentile" | "manual";
+  gamma?: number; // 0.05..10, 1 = no change
+  cmap?: string; // 'gray' always; matplotlib names when available
+  vmin?: number; // both present -> manual override
+  vmax?: number;
 }
 
 export interface PingResult {
@@ -127,7 +138,7 @@ export interface OpenRecord {
 /** Result of the `image` method (PNG arrives base64-inlined). */
 export interface ImageResult {
   array_path: string;
-  png: string; // base64 PNG (8-bit grayscale)
+  png: string; // base64 PNG (8-bit gray, or RGB when a colormap is applied)
   width: number;
   height: number;
   full_shape: number[];
@@ -136,6 +147,8 @@ export interface ImageResult {
     algorithm: string;
     vmin: number | null;
     vmax: number | null;
+    gamma?: number;
+    cmap?: string;
   };
   stats: {
     min: number | null;
