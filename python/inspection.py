@@ -413,6 +413,29 @@ def _open_asdf(path: str):
     return result, "asdf", [result]
 
 
+_TAG_HINT = (
+    "This file uses ASDF tags the backend interpreter cannot load yet "
+    "(common for Roman/JWST products with gwcs WCS objects). Install the "
+    "missing packages into that interpreter, e.g.:\n"
+    "    python -m pip install gwcs roman_datamodels\n"
+    "then run 'ASDF Preview: Restart Python Backend' and retry."
+)
+
+
+def _parse_hint(exc_text: str) -> Optional[str]:
+    """Turn a raw parse traceback into an actionable hint when we recognize it."""
+    lowered = exc_text.lower()
+    if any(marker in lowered for marker in (
+        "tag:", "not recognized", "gwcs", "stsci.edu",
+        "unknown right model type", "no handler found",
+    )):
+        return _TAG_HINT
+    if "checksum" in lowered:
+        return ("ASDF reported a checksum mismatch; the file may be corrupt or "
+                "still being written. Re-open after the pipeline finishes.")
+    return None
+
+
 def build_record(path: str) -> Dict[str, Any]:
     """Parse (or fetch from cache) *path* and return its JSON-ready record.
 
@@ -445,6 +468,7 @@ def build_record(path: str) -> Dict[str, Any]:
         raise BackendError(
             protocol.E_PARSE,
             f"Failed to parse ASDF file: {exc.__class__.__name__}: {exc}",
+            hint=_parse_hint(str(exc)),
         )
 
     try:

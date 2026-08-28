@@ -56,16 +56,20 @@ export class BackendManager implements vscode.Disposable {
   constructor(
     /** Absolute path of the extension root (contains python/backend_main.py). */
     private readonly extensionRoot: string,
-    context: vscode.ExtensionContext
+    context: vscode.ExtensionContext,
+    /** Shared channel (created by activate) so one log surface covers activation + backend. */
+    externalOutput?: vscode.OutputChannel
   ) {
-    this.output = vscode.window.createOutputChannel("ASDF Preview");
+    this.output =
+      externalOutput ?? vscode.window.createOutputChannel("ASDF Preview");
     this.statusItem = vscode.window.createStatusBarItem(
       vscode.StatusBarAlignment.Left,
       -100 // only visible while the backend is alive/starting
     );
     this.statusItem.name = "ASDF Preview backend status";
     this.statusItem.command = "asdfPreview.restartBackend";
-    context.subscriptions.push(this.output, this.statusItem);
+    if (!externalOutput) context.subscriptions.push(this.output);
+    context.subscriptions.push(this.statusItem);
   }
 
   private log(msg: string): void {

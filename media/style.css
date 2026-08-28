@@ -99,6 +99,22 @@ html, body {
   background: var(--bg);
 }
 
+/* Tree-pane header row: title left, tree-wide actions right. */
+#tree-meta { display: flex; align-items: center; gap: 6px; }
+#tree-meta .spacer { flex: 1; }
+.mini-btn {
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mini-btn:hover { background: var(--hover); color: var(--fg); }
+
 /* -------------------------------------------------------------------- tree */
 
 #tree-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -142,7 +158,8 @@ html, body {
   font-size: 10px;
   transition: transform 80ms ease;
 }
-.node.open > .head .chev { transform: rotate(90deg); }
+/* open = absence of .collapsed (single source of truth for node state) */
+.node:not(.collapsed) > .head .chev { transform: rotate(90deg); }
 
 .name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .name.idx { color: var(--muted); font-size: 11px; }

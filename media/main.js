@@ -29,6 +29,8 @@ const els = {
   placeholder: $('image-placeholder'),
   imageStatus: $('image-status'),
   zoomPct: $('zoom-pct'),
+  btnExpandAll: $('btn-expand-all'),
+  btnCollapseAll: $('btn-collapse-all'),
 };
 
 const ctx = els.canvas.getContext('2d');
@@ -159,7 +161,10 @@ function buildEntry(name, node, depth) {
 
   if (node.type === 'object' || node.type === 'list') {
     const wrap = document.createElement('div');
-    wrap.className = 'node' + (depth < 2 ? ' open' : ' collapsed');
+    // Single state class: .collapsed hides kids; its absence means open. (Two
+    // complementary classes + toggle('open') left collapsed nodes stuck --
+    // the click added 'open' but never removed 'collapsed'.)
+    wrap.className = depth < 2 ? 'node' : 'node collapsed';
     // Auto-expand the first two levels so Roman files show meta.* at a glance.
 
     const head = document.createElement('div');
@@ -187,7 +192,7 @@ function buildEntry(name, node, depth) {
     const kids = document.createElement('div');
     kids.className = 'kids';
 
-    head.addEventListener('click', () => wrap.classList.toggle('open'));
+    head.addEventListener('click', () => wrap.classList.toggle('collapsed'));
 
     if (node.type === 'object' && node.children) {
       const frag = document.createDocumentFragment();
@@ -488,6 +493,15 @@ const endPan = (e) => {
 };
 els.canvas.addEventListener('pointerup', endPan);
 els.canvas.addEventListener('pointercancel', endPan);
+
+// Tree-wide view controls. The tree is fully rendered in the DOM (backend
+// caps it at 20k nodes), so a single class sweep covers everything.
+function setAllNodesCollapsed(collapsed) {
+  const nodes = els.tree.querySelectorAll('.node');
+  for (const n of nodes) n.classList.toggle('collapsed', collapsed);
+}
+els.btnExpandAll.addEventListener('click', () => setAllNodesCollapsed(false));
+els.btnCollapseAll.addEventListener('click', () => setAllNodesCollapsed(true));
 
 els.btnFit.addEventListener('click', () => state.image && fitToPane());
 els.btn100.addEventListener('click', set100Percent);

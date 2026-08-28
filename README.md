@@ -63,6 +63,18 @@ npm run compile
 > If you already have `asdf` installed system-wide (or in the venv VSCode itself
 > runs from), skip step 1 entirely — the extension will find it.
 
+### ⚠️ After installing/updating the extension: reload the window
+
+VSCode keeps running extensions in memory. If you install or update this
+extension while a window is already open, **run `Developer: Reload Window` (or
+restart) before opening `.asdf` files** — otherwise the new version is not
+actually what gets activated, and you can't tell which build a failure came
+from.
+
+(v0.1.1+ also logs activation and per-open diagnostics to the **ASDF Preview**
+output channel, so any remaining failure mode is visible there instead of as
+an opaque workbench assertion.)
+
 ### Using a command-line preview instead of the editor?
 
 The same backend doubles as a tiny CLI:
@@ -110,6 +122,30 @@ The Python process (and its `asdf`/`astropy` imports) is started **once**, on fi
   without `asdf-astropy`) fail to parse and are shown as a clear error, not a crash.
 - One preview per open is automatic (the recommended array); everything else is one click away.
 
+### Real Roman / JWST files: install the tag handlers too
+
+Plain `asdf` can't load products that embed WCS objects (grism/slits L2 files,
+anything with gwcs models): parsing dies with an error about unrecognizable
+tags like `tag:stsci.edu:gwcs/...`. The webview shows this as a clear error
+with the fix. One extra install is all it takes:
+
+```bash
+./.venv/bin/pip install gwcs              # WCS objects (required for many L2 files)
+./.venv/bin/pip install roman_datamodels  # optional: full Roman-aware parsing
+```
+
+Then `ASDF Preview: Restart Python Backend`.
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Webview shows `E_NO_PYTHON` / `E_NO_ASDLIB` | Set `asdfPreview.pythonPath` to an interpreter that has `pip install asdf` done. |
+| Workbench error `Assertion Failed: Argument is undefined or null` when opening `.asdf` | An exception escaped the extension's editor resolver (historically a detached `webview.asWebviewUri` call; fixed in 0.1.2). The **ASDF Preview** output channel now logs the full stack — open View ▸ Output, pick "ASDF Preview", and check for a `resolveCustomEditor FAILED` line. If it still happens on ≥0.1.2, report that log. |
+| Nothing changed after installing/updating | Reload the window (`Developer: Reload Window`) so the in-memory extension matches disk. |
+| `E_PARSE … tag:…gwcs…` / unknown model type | Install `gwcs` (and/or `roman_datamodels`) into the backend interpreter, then restart the backend. |
+| Tree appears but image says nothing to render | File genuinely has no 2-D array — the tree is still fully usable. |
+
 ## Repository layout
 
 ```
@@ -128,4 +164,4 @@ testdata/       fixture generator + pipe-level smoke test
 test/host_sim.js Node harness driving the compiled manager against the real backend
 ```
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the wire protocol spec and design rationale.
+See DEVELOPMENT.md for the wire protocol spec and design rationale.

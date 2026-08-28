@@ -38,8 +38,13 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
 
   constructor(
     private readonly backend: BackendManager,
-    private readonly extRoot: vscode.Uri
+    private readonly extRoot: vscode.Uri,
+    private readonly output?: vscode.OutputChannel
   ) {}
+
+  private log(msg: string): void {
+    this.output?.appendLine(`[editor] ${msg}`);
+  }
 
   // -------------------------------------------------- provider contract
 
@@ -48,13 +53,49 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
   }
 
   async openCustomDocument(uri: vscode.Uri): Promise<AsdfCustomDocument> {
-    return new AsdfCustomDocument(uri);
+    // Fail-soft + observable: if anything here throws, VSCode's workbench has
+    // no fallback for a failed custom-document open (it asserts). Log and rethrow.
+    try {
+      const doc = new AsdfCustomDocument(uri);
+      this.log(`openCustomDocument ${uri.fsPath}`);
+      return doc;
+    } catch (err) {
+      this.log(`openCustomDocument FAILED for ${uri.fsPath}: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      throw err;
+    }
   }
 
   resolveCustomEditor(
     document: AsdfCustomDocument,
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken
+  ): void {
+    // Everything here runs inside the workbench's editor-resolution pipeline.
+    // A throw would surface as an opaque assertion in renderer.log, so wrap it
+    // all and at least leave a trail in our own output channel.
+    try {
+      this.resolveCustomEditorInner(document, panel);
+    } catch (err) {
+      this.log(
+        `resolveCustomEditor FAILED for ${document.uri.fsPath}: ${
+          err instanceof Error ? err.stack ?? err.message : String(err)
+        }`
+      );
+      try {
+        panel.webview.html = `<html><body style="font-family:var(--vscode-font-family);padding:16px;color:var(--vscode-errorForeground)">
+          <h3>ASDF Preview failed to initialize</h3>
+          <pre>${String(err instanceof Error ? err.message : err)}</pre>
+          <p>Details in the \u201cASDF Preview\u201d output channel (View &gt; Output).</p></body></html>`;
+      } catch {
+        /* panel may already be gone */
+      }
+      throw err;
+    }
+  }
+
+  private resolveCustomEditorInner(
+    document: AsdfCustomDocument,
+    panel: vscode.WebviewPanel
   ): void {
     const key = document.uri.toString();
     this.panels.set(key, panel);
@@ -80,6 +121,8 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
     panel.webview.onDidReceiveMessage((msg: WebviewMsgIn) => {
       void this.onWebviewMessage(document.uri, panel, msg);
     });
+
+    this.log(`resolveCustomEditor ok for ${document.uri.fsPath}`);
 
     // Auto-reload when the file on disk changes (e.g. just calibrated).
     try {
@@ -231,7 +274,11 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
   private buildHtml(webview: vscode.Webview): string {
     const nonce = randomNonce();
     const cspSource = webview.cspSource;
-    const extUri = webview.asWebviewUri;
+    // NOTE: asWebviewUri is a class method on the Webview proxy and relies on
+    // its receiver -- always call it AS webview.asWebviewUri(...). Detaching it
+    // (`const f = webview.asWebviewUri`) makes `this` undefined and throws
+    // "Cannot set properties of undefined (setting '#u')" inside the API.
+    const extUri = (u: vscode.Uri) => webview.asWebviewUri(u);
     const cssUri = extUri(vscode.Uri.joinPath(this.extRoot, "media", "style.css"));
     const jsUri = extUri(vscode.Uri.joinPath(this.extRoot, "media", "main.js"));
 
@@ -262,7 +309,11 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
 
     <main id="split">
       <section id="tree-pane" aria-label="Metadata tree">
-        <div id="tree-meta" class="pane-subtitle">metadata</div>
+        <div id="tree-meta" class="pane-subtitle">
+          <span>metadata</span><span class="spacer"></span>
+          <button id="btn-expand-all" class="mini-btn" title="Expand every metadata node">expand all</button>
+          <button id="btn-collapse-all" class="mini-btn" title="Collapse every metadata node">collapse all</button>
+        </div>
         <div id="tree"><div class="loading-row"><span class="spinner"></span> opening file…</div></div>
       </section>
 

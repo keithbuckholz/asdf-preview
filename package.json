@@ -2,7 +2,7 @@
   "name": "asdf-preview",
   "displayName": "ASDF Preview (Roman / JWST quick-look)",
   "description": "Opens .asdf files in a webview: collapsible metadata tree + zscale-stretched quick-look image, backed by a persistent local Python process.",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "publisher": "local-dev",
   "license": "MIT",
   "engines": {
@@ -82,6 +82,7 @@
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "~1.85.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.5.0"
   }
 }

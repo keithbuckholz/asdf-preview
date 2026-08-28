@@ -21,9 +21,21 @@ const vscodeStub = {
   },
   workspace: {
     getConfiguration: () => ({ get: (_k, d) => d }), // defaults only
+    createFileSystemWatcher: () => ({ onDidChange() {}, onDidCreate() {}, dispose() {} }),
   },
   StatusBarAlignment: { Left: 1 },
   MarkdownString: class { constructor(s) { this.value = s; } },
+  RelativePattern: class {
+    constructor(base, pattern) { this.base = base; this.pattern = pattern; }
+  },
+  Uri: {
+    file: (p) => ({ fsPath: p, scheme: 'file', path: p, toString: () => 'file://' + p }),
+    parse: (s) => ({ fsPath: s.replace(/^file:\/\//, ''), scheme: 'file', path: s, toString: () => s }),
+    joinPath: (base, ...parts) => {
+      const fsPath = base.fsPath.split('/').concat(parts).join('/');
+      return { fsPath, scheme: 'file', path: fsPath, toString: () => 'file://' + fsPath };
+    },
+  },
 };
 
 const origResolve = Module._resolveFilename;
@@ -34,8 +46,30 @@ Module._resolveFilename = function (request, ...rest) {
 require.cache['vscode'] = { id: 'vscode', filename: 'vscode', loaded: true, exports: vscodeStub };
 
 const { BackendManager } = require(ROOT + '/out/backend/manager.js');
+const { AsdfEditorProvider, AsdfCustomDocument } = require(ROOT + '/out/editor.js');
 const small = ROOT + '/testdata/small.asdf';
 const big = ROOT + '/testdata/big.asdf';
+
+// Webview mock whose asWebviewUri is a REAL prototype method that writes a
+// private field on its receiver -- structurally identical to VSCode's real
+// implementation (which assigns `this.#u = true`). Detaching the method
+// (the v0.1.x bug) throws the same "Cannot set properties of undefined"
+// TypeError here as in production.
+class MockWebview {
+  #flag = false;
+  constructor() { this.html = ''; this.options = {}; this.cspSource = 'vscode-resource:mock'; }
+  asWebviewUri(uri) {
+    this.#flag = true; // <- relies on the receiver, like the real API
+    return { toString: () => `vscode-webview://mock/${uri.fsPath}` };
+  }
+  onDidReceiveMessage(cb) {
+    this._msgCb = cb; // provider stores a handler; never fired in this sim
+  }
+}
+function makePanel() {
+  const p = { webview: new MockWebview(), _disposed: false, onDidDispose(cb) { this._cb = cb; }, dispose() { this._disposed = true; if (this._cb) this._cb(); } };
+  return p;
+}
 
 async function main() {
   const mgr = new BackendManager(ROOT, { subscriptions: [] });
@@ -90,6 +124,39 @@ async function main() {
 
   mgr.dispose();
   await new Promise((r) => setTimeout(r, 300));
+
+  console.log('== editor provider: openCustomDocument + resolveCustomEditor ==');
+  const provider = new AsdfEditorProvider(
+    { closeFile: async () => {} }, // backend surface the provider touches here
+    vscodeStub.Uri.file(ROOT),
+    { appendLine: (m) => console.log(`  [editor-output] ${m}`) }
+  );
+  const uri = vscodeStub.Uri.file(small);
+  const doc = await provider.openCustomDocument(uri);
+  check('openCustomDocument returns document', doc instanceof AsdfCustomDocument && !!doc.uri);
+
+  const panel = makePanel();
+  let resolveThrew = null;
+  try {
+    provider.resolveCustomEditor(doc, panel, { isCancellationRequested: false });
+  } catch (e) { resolveThrew = e; }
+  check('resolveCustomEditor does not throw', !resolveThrew, resolveThrew && `${resolveThrew.message}`);
+  check(
+    'webview html built (css+js via asWebviewUri)',
+    /vscode-webview:\/\/mock\/.+style\.css/.test(panel.webview.html) &&
+      /vscode-webview:\/\/mock\/.+main\.js/.test(panel.webview.html) &&
+      panel.webview.html.includes('id="canvas"') &&
+      panel.webview.html.includes('id="btn-collapse-all"') &&
+      panel.webview.html.includes('id="btn-expand-all"'),
+    `html head: ${String(panel.webview.html).slice(0, 200)}`
+  );
+
+  // Dispose path should release the watcher + backend slot without throwing.
+  let disposeThrew = null;
+  try { panel.dispose(); } catch (e) { disposeThrew = e; }
+  check('panel dispose is clean', !disposeThrew && panel._disposed);
+  provider.dispose();
+
   if (failures) { console.log(`HOST SIM FAILED (${failures})`); process.exit(1); }
   console.log('HOST SIM PASSED');
 }
