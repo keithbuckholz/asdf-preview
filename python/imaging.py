@@ -4,12 +4,16 @@ Stages (all in-memory, numpy-first):
 
     find_array  -> locate ndarray by dotted path in the live tree
     prepare     -> unit/mask stripping, dtype check, stride downsample to <= max_side
-    zrange      -> astropy ZScaleInterval bounds (proper iterative min/max with
-                   sigma-like clipping), or a percentile fallback without astropy
-    to_u8       -> clip + normalize to 8-bit gray
+    zrange      -> zscale bounds: astropy ZScaleInterval (proper iterative min/max
+                   with sigma-like clipping), or a percentile fallback without
+                   astropy; make_preview also applies the linear/percentile/manual
+                   stretches from the validated render opts
+    to_u8       -> clip + normalize to 8-bit gray, optional gamma
     full_stats  -> nan-aware min/max/mean/std over the *full* array (bounded)
     encode_png  -> 8-bit grayscale PNG via Pillow if present, else a small
-                   built-in writer (zlib only) so we never hard-require Pillow
+                   built-in writer (zlib only); non-gray colormaps are LUT-mapped
+                   to RGB (cmap_lut -> encode_png_rgb; Pillow required), so we
+                   never hard-require Pillow or matplotlib
 
 Design notes
 ------------

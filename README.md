@@ -10,8 +10,7 @@ ASDF-based data) in VSCode/VSCodium and immediately see:
   when available), plus linear / percentile / manual bounds and γ — as is the
   colormap (gray always; matplotlib's cmaps when it is installed).
 
-Everything renders inside a VSCode webview panel — no notebook, no browser tab,
-no JDaviz, no Firefly, no Jupyter kernel. A single small Python backend process
+Everything renders inside a VSCode webview panel. A single small Python backend process
 starts on first `.asdf` open and is then reused for every file you open.
 
 ```
@@ -168,8 +167,9 @@ Then `ASDF Preview: Restart Python Backend`.
 
 - `npm run smoke` — end-to-end wire-protocol test against the real backend
   (handshake, cold/hot opens, tree caps, stretch/colormap options, PNG validity,
-  error paths, clean shutdown). It uses your PATH `python3`; if that lacks
-  `asdf`, run `.venv/bin/python testdata/smoke_test.py` instead.
+  error paths, clean shutdown). It runs this repo's venv interpreter
+  (`.venv/bin/python`) for both driver and backend; with a venv elsewhere, pass
+  it explicitly: `python3 testdata/smoke_test.py /path/to/your/python`.
 - `testdata/generate.py` — regenerates the fixtures `small.asdf` (~1 MB) and
   `big.asdf` (~109 MB): `.venv/bin/python testdata/generate.py`.
 - `test/host_sim.js` — drives the compiled manager (and editor provider) against

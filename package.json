@@ -77,7 +77,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
-    "smoke": "python3 testdata/smoke_test.py"
+    "smoke": "./.venv/bin/python testdata/smoke_test.py"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

@@ -2,10 +2,12 @@
 """Generate synthetic ASDF fixtures for smoke-testing the backend.
 
 Creates (next to this file):
-  small.asdf -- ~1 MB: 512^2 data + a second 2-D array + assorted metadata,
-                including a >256-element list to exercise tree truncation.
-  big.asdf   -- ~90 MB: 4096^2 float32 `data` with a Gaussian PSF blob,
-                NaN corner (DQ-style), int/uint arrays, 1-D array.
+  small.asdf -- ~1 MB: 512^2 float32 `data` + a second 2-D array + a 1-D array
+                + assorted metadata, including a >256-element list to exercise
+                tree truncation.
+  big.asdf   -- ~109 MB: 4096^2 float32 `data` with a Gaussian PSF blob and a
+                NaN corner (DQ-style), plus uint8 `dq`, float32 `err`, and
+                uint16 `flags_sci` arrays.
 
 Usage:  python testdata/generate.py
 """
