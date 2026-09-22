@@ -19,10 +19,10 @@ starts on first `.asdf` open and is then reused for every file you open.
 │ ┌────────────────────┬────────────────────────────────────┐ │
 │ │ metadata           │ [array ▾ data (4096×4096)] Fit 100%│ │
 │ │ ▶ meta   (18 keys) │                                    │ │
-│ │   ▶ instrument …   │            .-""-.                  │ │
+│ │   ▶ instrument …   │             ____                   │ │
 │ │ ▶ data   4096×4096 │          .-'     '-.               │ │
-│ │           float32 [show image]  '   ●   '               │ │
-│ │ ▶ dq     4096×4096 uint8        '-._____.-'            │ │
+│ │           float32 [show image]'    ●     '              │ │
+│ │ ▶ dq     4096×4096 uint8        '-._____.-'             │ │
 │ └────────────────────┴────────────────────────────────────┘ │
 │ data · full 4096×4096 · stride 4×4 · zscale [0.02, 0.2] …   │
 └─────────────────────────────────────────────────────────────┘
@@ -104,8 +104,8 @@ Other flags: `--max-side N` (default 1024, clamped to 64–4096) and
    (γ and colormap are shown when they differ from defaults).
 3. **Pick another array** with the dropdown (or the "show image" button next to any
    2-D array in the tree) — e.g. preview `dq` or an error array.
-4. **Tune the render** with the settings row: stretch (zscale / linear /
-   percentile / manual), colormap, γ, and manual vmin/vmax bounds — changes
+4. **Tune the render** with the settings row: stretch (zscale / percentile / manual),
+   normalization (linear, log, sqrt), colormap, γ, and manual vmin/vmax bounds — changes
    re-render the current array without re-parsing. Non-gray colormaps need
    `matplotlib` in the backend interpreter.
 5. Commands:
@@ -144,12 +144,11 @@ The Python process (and its `asdf`/`astropy` imports) is started **once**, on fi
 Plain `asdf` can't load products that embed WCS objects (grism/slits L2 files,
 anything with gwcs models): parsing dies with an error about unrecognizable
 tags like `tag:stsci.edu:gwcs/...`. The webview shows this as a clear error
-with the fix. One extra install is all it takes:
+with the fix.
 
-```bash
-./.venv/bin/pip install gwcs              # WCS objects (required for many L2 files)
-./.venv/bin/pip install roman_datamodels  # optional: full Roman-aware parsing
-```
+To add this capability, install into your python environment: \
+`pip install gwcs` for WCS objects \
+`pip install roman_datamodels` for Roman Space Telescope
 
 Then `ASDF Preview: Restart Python Backend`.
 

@@ -2,16 +2,25 @@
   "name": "asdf-preview",
   "displayName": "ASDF Preview (Roman / JWST quick-look)",
   "description": "Opens .asdf files in a webview: collapsible metadata tree + zscale-stretched quick-look image, backed by a persistent local Python process.",
-  "version": "0.1.4",
-  "publisher": "local-dev",
-  "license": "MIT",
-  "engines": {
-    "vscode": "^1.85.0"
+  "version": "1.0.0",
+  "publisher": "keithbuckholz",
+  "author": {
+    "name": "Keith Buckholz"
   },
+  "homepage": "https://github.com/keithbuckholz/asdf-preview/README.md",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keithbuckholz/asdf-preview"
+  },
+  "bugs": "https://github.com/keithbuckholz/asdf-preview/issues",
   "categories": [
     "Visualization",
     "Other"
   ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
   "keywords": [
     "asdf",
     "roman",
@@ -21,11 +30,6 @@
     "preview"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [
-    "onCustomEditor:asdfPreview.editor",
-    "onCommand:asdfPreview.reload",
-    "onCommand:asdfPreview.restartBackend"
-  ],
   "contributes": {
     "customEditors": [
       {

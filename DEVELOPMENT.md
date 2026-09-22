@@ -2,6 +2,8 @@
 
 Contributor-facing document. The user guide lives in [README.md](README.md).
 
+[!WARNING] All code and documentation was initally generated via LLM, Qwen3.8-27B. Going forward, most edits will be made by hand. 
+
 ## 1. Architecture at a glance
 
 ```
@@ -16,7 +18,7 @@ Contributor-facing document. The user guide lives in [README.md](README.md).
  │   • restart throttling, status bar   │   JSONL  │        │        cache, tree serialize) │
  │ BackendProcess (src/backend/client)  │          │        └─ imaging.py     (downsample → │
  │   • line framing, id-matching,       │          │             stretch → u8/cmap → PNG)   │
- │   • timeouts, orphan-frame drops     │          │                                          │
+ │   • timeouts, orphan-frame drops     │          │                                        │
  └──────────────┬───────────────────────┘          └────────────────────────────────────────┘
                 │ postMessage (tree JSON / base64 PNG / errors)
         ┌───────▼────────┐
@@ -243,9 +245,9 @@ For a selected array `a` (H×W):
    Without astropy: percentile(2, 98) fallback, algorithm name reported in the response.
    Constant/degenerate arrays get ±max(1, 5%·|mid|) bounds so they render gray instead of
    clipping to black/white.
-4. **Stretch.** Non-finite values are mapped to the nearest bound (NaN → dark, not white
-   speckle), then linear map `(v - vmin) * 255 / (vmax - vmin)` clipped to `[0,255]`,
-   with the optional user γ (default 1.0) applied to the normalized value.
+4. **Normalize.** Non-finite values are mapped to the nearest bound (NaN → dark, not white
+   speckle), then normalized and clipped to `[0,255]`, with the optional user γ 
+   (default 1.0) applied to the normalized value.
 5. **Encode.** 8-bit grayscale PNG via Pillow if importable, else a built-in ~30-line
    writer (zlib + manual IHDR/IDAT/IEND) — so the backend has *zero* hard dependencies
    beyond `asdf`. A non-gray colormap is applied as a 256-entry LUT and encoded as
@@ -287,7 +289,7 @@ versioned vsix next to the new one has caused a wrong-version install before
 
 ```bash
 rm -f asdf-preview-0.*.vsix            # drop old artifacts first
-npx vsce package --allow-missing-repository --skip-license
+npx vsce package
 codium --install-extension $PWD/asdf-preview-<new>.vsix   # then reload the window
 ```
 
@@ -313,32 +315,13 @@ catalog already exposes 1-D arrays with their shapes, so pairing detection (e.g.
 **Other ideas that fit the same contract:** cube max-projection or moment-1 maps as new
 `image` variants; multi-array mosaic thumbnails in the tree; a `stretch: "linear"|"zscale"|"hist-equalized"` param once we collect user preferences.
 
-## 9. Custom-built vs JDaviz / Firefly (why this exists)
-
-Both existing astronomy viewers were evaluated and rejected as backends for *this*
-use case:
-
-- **JDaviz** is excellent for in-notebook interactive analysis, but it drags in the full
-  Jupyter-widget stack (ipyvue/voila-style dependencies) with multi-second startup *per
-  file view* and a browser-side rendering model. We wanted an in-editor panel that opens
-  in well under a second, with zero notebook machinery.
-- **Firefly/IPAC** is a mature Java server with strong astronomy UX, but it needs a
-  separate long-running server process, has no native ASDF reader (you'd still need the
-  Python parsing layer — i.e. this backend anyway), and adds a protocol+deployment surface
-  far larger than one supervised child process.
-
-What remains from that analysis: the *requirements* (real ASDF parsing via `asdf`,
-zscale-stretched quick-look, in-editor rendering) are implemented here directly, with the
-heavy lifting delegated to the libraries already trusted by the Roman/JWST pipeline
-(`asdf`, `numpy`, optionally `astropy` + `roman_datamodels`).
-
-## 10. Known sharp edges (honest list)
+## 9. Known sharp edges
 
 - asdf ≥4 exposes **lazy tag objects** (`NDArrayType`) in `.tree`, not raw ndarrays —
   `inspection.materialize_array()` is the single place that normalizes this; any new code
   touching arrays should go through it.
 - astropy renamed `ZScaleInterval.bounds` → `get_limits` in v8; both are probed at runtime.
-- First open of a *genuinely* huge (multi-GB) file can exceed the default 60 s timeout on
+- First open of a large (multi-GB) file can exceed the default 60 s timeout on
   slow disks — raise `asdfPreview.requestTimeoutSeconds`; the backend isn't killed by the
   timeout, so the response will arrive and be dropped cleanly if it does.
 - The webview tree renders all nodes into the DOM (backend caps it at 20 k nodes); a very
