@@ -54,7 +54,8 @@ export interface StatusResult {
 
 /** Optional user image settings forwarded to the backend `image` method. */
 export interface RenderOpts {
-  stretch?: "zscale" | "linear" | "percentile" | "manual";
+  stretch?: "zscale" | "manual" | "percentile";
+  transfer?: "linear" | "sqrt" | "log";
   gamma?: number; // 0.05..10, 1 = no change
   cmap?: string; // 'gray' always; matplotlib names when available
   vmin?: number; // both present -> manual override

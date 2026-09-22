@@ -222,6 +222,7 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
           };
           const o = msg.opts || {};
           if (typeof o.stretch === "string") params.stretch = o.stretch;
+          if (typeof o.transfer === "string") params.transfer = o.transfer;
           if (typeof o.cmap === "string") params.cmap = o.cmap;
           for (const k of ["gamma", "vmin", "vmax"] as const) {
             const v = o[k];
@@ -354,11 +355,13 @@ export class AsdfEditorProvider implements vscode.CustomReadonlyEditorProvider, 
           <select id="sel-stretch"><option value="zscale">zscale</option></select>
           <label for="sel-cmap" title="Colormap">cmap</label>
           <select id="sel-cmap"><option value="gray">gray</option></select>
+          <label for="sel-transfer" title="Normalization algorithm">normalization</label>
+          <select id="sel-transfer"><option value="linear">linear</option></select>
           <label for="in-gamma" title="Gamma on normalized values: &lt;1 lifts shadows, &gt;1 crushes them">γ</label>
           <input id="in-gamma" type="number" min="0.2" max="3" step="0.1" value="1">
-          <label for="in-vmin" title="Manual bounds: filling either switches stretch to manual">vmin</label>
+          <label id="lbl-vmin" for="in-vmin" title="Manual bounds: filling either switches stretch to manual">vmin</label>
           <input id="in-vmin" type="number" placeholder="auto" title="manual vmin">
-          <label for="in-vmax" title="Manual bounds">vmax</label>
+          <label id="lbl-vmax" for="in-vmax" title="Manual bounds">vmax</label>
           <input id="in-vmax" type="number" placeholder="auto" title="manual vmax">
         </div>
         <div id="canvas-wrap">

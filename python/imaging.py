@@ -6,7 +6,7 @@ Stages (all in-memory, numpy-first):
     prepare     -> unit/mask stripping, dtype check, stride downsample to <= max_side
     zrange      -> zscale bounds: astropy ZScaleInterval (proper iterative min/max
                    with sigma-like clipping), or a percentile fallback without
-                   astropy; make_preview also applies the linear/percentile/manual
+                   astropy; make_preview also applies the manual/percentile/zscale
                    stretches from the validated render opts
     to_u8       -> clip + normalize to 8-bit gray, optional gamma
     full_stats  -> nan-aware min/max/mean/std over the *full* array (bounded)
@@ -148,7 +148,7 @@ def prepare(arr: Any, max_side: int) -> Tuple[np.ndarray, Tuple[int, int], np.nd
     return work, (sh, sw), full_f32
 
 
-def to_u8(work: np.ndarray, vmin: float, vmax: float, gamma: float = 1.0) -> np.ndarray:
+def to_u8(work: np.ndarray, vmin: float, vmax: float, transfer: str, gamma: float = 1.0) -> np.ndarray:
     """Clip+normalize *work* to 8-bit gray.
 
     Non-finite values are mapped to the nearest bound (NaN -> dark), so a
@@ -157,10 +157,14 @@ def to_u8(work: np.ndarray, vmin: float, vmax: float, gamma: float = 1.0) -> np.
     normalized value (1.0 = no change; <1 lifts shadows, >1 crushes them).
     """
     w = np.nan_to_num(work, nan=vmin, posinf=vmax, neginf=vmin)
-    norm = (w - vmin) * (1.0 / (vmax - vmin))
+    normalized = np.clip((w - vmin) / (vmax - vmin), 0.0, 1.0)
+    if transfer == "sqrt":
+        normalized = np.sqrt(normalized)
+    elif transfer == "log":
+        normalized = np.log1p(normalized) / _LN2
     if gamma != 1.0:
-        norm = np.power(np.clip(norm, 0.0, 1.0), gamma)
-    u8 = np.clip(norm * 255.0, 0.0, 255.0)
+        normalized = np.power(np.clip(normalized, 0.0, 1.0), gamma)
+    u8 = np.clip(normalized * 255.0, 0.0, 255.0)
     return np.rint(u8).astype(np.uint8)
 
 
@@ -275,7 +279,9 @@ def _manual_png(u8: np.ndarray, h: int, w: int) -> bytes:
 
 # ----------------------------------------------------------------- user opts
 
-STRETCHES = ("zscale", "linear", "percentile", "manual")
+STRETCHES = ("zscale", "manual", "percentile")
+TRANSFERS = ("linear", "log", "sqrt")
+_LN2 = math.log(2.)
 _CMAP_PREFERRED = ("viridis", "plasma", "inferno", "magma", "turbo", "cividis")
 _lut_cache: Dict[str, np.ndarray] = {}
 
@@ -353,6 +359,12 @@ def validate_render_opts(params: Dict[str, Any]) -> Dict[str, Any]:
             protocol.E_BAD_REQUEST,
             f"Unknown stretch {stretch!r}; use one of: {', '.join(STRETCHES)}",
         )
+    transfer = params.get("transfer", "linear")
+    if transfer not in TRANSFERS:
+        raise PreviewError(
+            protocol.E_BAD_REQUEST,
+            f"Unknown normalization {transfer!r}; use one of: {', '.join(TRANSFERS)}"
+        )
     gamma = _num("gamma")
     if gamma is None:
         gamma = 1.0
@@ -369,14 +381,25 @@ def validate_render_opts(params: Dict[str, Any]) -> Dict[str, Any]:
             f"Colormap {cmap!r} unavailable; supported: "
             f"{', '.join(available_cmaps())}{extra}",
         )
+    # vmin/vmax are individually optional
     vmin, vmax = _num("vmin"), _num("vmax")
-    if (vmin is None) != (vmax is None):
-        raise PreviewError(
-            protocol.E_BAD_REQUEST, "Provide both vmin and vmax (or neither)"
-        )
-    if vmin is not None and vmax <= vmin:
+    if (vmin is not None) and (vmax is not None) and (vmax <= vmin):
         raise PreviewError(protocol.E_BAD_REQUEST, '"vmax" must be > "vmin"')
-    return {"stretch": stretch, "gamma": gamma, "cmap": cmap, "vmin": vmin, "vmax": vmax}
+
+    #pmin/pmax are individually optional and percentile-mode only
+    pmin, pmax = _num("pmin"), _num("pmax")
+    if pmin is not None and not (0.0 <= pmin <= 100.0):
+        raise PreviewError(protocol.E_BAD_REQUEST, '"pmin" must be between 0 and 100')
+    if pmax is not None and not (0.0 <= pmax <= 100.0):
+        raise PreviewError(protocol.E_BAD_REQUEST, '"pmax" must be between 0 and 100')
+    if pmin is None:
+        pmin = 2.0
+    if pmax is None:
+        pmax = 98
+    if pmin >= pmax:
+        raise PreviewError(protocol.E_BAD_REQUEST, '"pmin" must be < "pmax"')
+    return {"stretch": stretch, "transfer": transfer, "gamma": gamma, "cmap": cmap,
+            "vmin": vmin, "vmax": vmax, "pmin": pmin, "pmax": pmax}
 
 
 def make_preview(
@@ -387,7 +410,7 @@ def make_preview(
 ) -> Dict[str, Any]:
     """Full pipeline for one 2-D array. Returns a JSON-safe result dict."""
     if opts is None:
-        opts = {"stretch": "zscale", "gamma": 1.0, "cmap": "gray",
+        opts = {"stretch": "zscale", "transfer": "linear", "cmap": "gray",
                 "vmin": None, "vmax": None}
     node = find_array(tree, dotted_path)
     if is_quantity(node):
@@ -412,6 +435,7 @@ def make_preview(
             "algorithm": algo,
             "vmin": _r6(lo),
             "vmax": _r6(hi),
+            "transfer": opts["transfer"],
             "gamma": opts["gamma"],
             "cmap": opts["cmap"],
         }
@@ -435,14 +459,20 @@ def make_preview(
         }
 
     # --- stretch bounds -------------------------------------------------
-    if opts["vmin"] is not None and opts["vmax"] is not None:
-        vmin, vmax, algo = float(opts["vmin"]), float(opts["vmax"]), "manual"
-    elif opts["stretch"] == "linear":
-        vmin, vmax = float(fin.min()), float(fin.max())
-        algo = "linear (data min/max)"
+    if opts["stretch"] == "manual":
+        if (vmin := opts["vmin"]) is None:
+            vmin = np.percentile(fin, 5)
+        if (vmax := opts["vmax"]) is None:
+            vmax = np.percentile(fin, 95)
+        algo = f"manual ({vmin}/{vmax})"
     elif opts["stretch"] == "percentile":
-        p2, p98 = np.percentile(fin, [2, 98])
-        vmin, vmax, algo = float(p2), float(p98), "percentile(2-98)"
+        if (pmin := opts["vmin"]) is None:
+            pmin = 5
+        if (pmax := opts["vmax"]) is None:
+            pmax = 95
+        vmin, vmax = np.percentile(fin, [pmin, pmax])
+        vmin, vmax = float(vmin), float(vmax)
+        algo = f"percentile ({pmin}-{pmax})"
     else:  # zscale (default)
         zr = zrange(sample)
         if zr is None:
@@ -450,7 +480,7 @@ def make_preview(
         vmin, vmax, algo = zr
 
     lo, hi = _widen(vmin, vmax)
-    u8 = to_u8(work, lo, hi, gamma=opts["gamma"])
+    u8 = to_u8(work, lo, hi, transfer=opts["transfer"], gamma=opts["gamma"])
 
     if opts["cmap"] == "gray":
         png_bytes = encode_png(u8)

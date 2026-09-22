@@ -32,10 +32,13 @@ const els = {
   btnExpandAll: $('btn-expand-all'),
   btnCollapseAll: $('btn-collapse-all'),
   selStretch: $('sel-stretch'),
+  selTransfer: $('sel-transfer'),
   selCmap: $('sel-cmap'),
   inGamma: $('in-gamma'),
   inVmin: $('in-vmin'),
   inVmax: $('in-vmax'),
+  lblVmin: $('lbl-vmin'),
+  lblVmax: $('lbl-vmax'),
 };
 
 const ctx = els.canvas.getContext('2d');
@@ -45,6 +48,19 @@ const state = {
   image: null,        // {img: HTMLImageElement, meta: ImageResult}
   view: { scale: 1, x: 0, y: 0 }, // CSS-px space; 1.0 == one image px per screen px
   userTransformed: false,
+};
+
+const BOUND_MODES = {
+  manual: {
+    label: 'vmin', label2: 'vmax',
+    title: 'manual vmin', title2: 'manual vmax',
+    min: null, max: null,
+  },
+  percentile: {
+    label: 'lo %', label2: 'hi %',
+    title: 'lower percentile clip (0-100)', title2: 'upper percentile clip (0-100)',
+    min: 0, max: 100,
+  },
 };
 
 /* ================================================================== messages */
@@ -349,6 +365,7 @@ function selectAndRequest(arrayPath) {
 function readOpts() {
   const opts = {
     stretch: els.selStretch.value,
+    transfer: els.selTransfer.value,
     cmap: els.selCmap.value,
   };
   const g = parseFloat(els.inGamma.value);
@@ -385,21 +402,41 @@ function fillCapabilities(caps) {
     else sel.value = fallback;
   };
   apply(els.selStretch, caps.stretches, 'zscale');
+  apply(els.selTransfer, caps.transfers, 'linear');
   apply(els.selCmap, caps.cmaps, 'gray');
 }
 
-els.selStretch.addEventListener('change', requestWithOpts);
+function syncBoundInputs() {
+  const cfg = BOUND_MODES[els.selStretch.value] ?? BOUND_MODES.manual;
+  els.lblVmin.textContent = cfg.label;
+  els.lblVmin.title = cfg.title;
+  els.lblVmax.textContent = cfg.label2;
+  els.lblVmax.title = cfg.title2;
+
+  for (const el of [els.inVmin, els.inVmax]) {
+    if (cfg.min == null) el.removeAttribute('min'); else el.min = cfg.min;
+    if (cfg.max == null) el.removeAttribute('max'); else el.max = cfg.max;
+    el.value = ''; 
+  }
+}
+
+els.selStretch.addEventListener('change', () => {
+  syncBoundInputs();
+  requestWithOpts();
+});
+
+els.selTransfer.addEventListener('change', requestWithOpts);
 els.selCmap.addEventListener('change', requestWithOpts);
 els.inGamma.addEventListener('change', requestWithOpts);
 // Typing a bound implies manual stretch; the backend enforces the pair.
 for (const el of [els.inVmin, els.inVmax]) {
-  el.addEventListener('focus', () => {
-    if (els.selStretch.value !== 'manual' &&
+  el.addEventListener('change', () => {
+    if (!['manual', 'percentile'].includes(els.selStretch.value) &&
         [...els.selStretch.options].some((o) => o.value === 'manual')) {
-      els.selStretch.value = 'manual';
-    }
+        els.selStretch.value = 'manual';
+      }
+      requestWithOpts();
   });
-  el.addEventListener('change', requestWithOpts);
 }
 
 // constant mirrors python/inspection.py MAX_LIST_ITEMS (for badge tooltips)
@@ -525,6 +562,7 @@ function setImageStatus(meta) {
     `full ${meta.full_shape.join('×')}`,
     meta.downsample_factor.some((f) => f > 1) ? `stride ${meta.downsample_factor.join('×')}` : null,
     `stretch: ${meta.stretch.algorithm} [${fmt(meta.stretch.vmin)}, ${fmt(meta.stretch.vmax)}]`,
+    meta.stretch.tansfer && meta.stretch.transfer !== 'linear' ? `norm: ${meta.stretch.transfer}` : null,
     (meta.stretch.gamma ?? 1) !== 1 ? `γ=${meta.stretch.gamma}` : null,
     meta.stretch.cmap && meta.stretch.cmap !== 'gray' ? `cmap: ${meta.stretch.cmap}` : null,
     st.min !== null && st.max !== null ? `min ${fmt(st.min)}  max ${fmt(st.max)}` : null,

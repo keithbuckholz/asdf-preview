@@ -61,6 +61,7 @@ def h_status(_params):
         # interpreter without matplotlib simply shows 'gray' (no error path).
         "capabilities": {
             "stretches": list(imaging.STRETCHES),
+            "transfers": list(imaging.TRANSFERS),
             "cmaps": imaging.available_cmaps(),
         },
         "pid": os.getpid(),
