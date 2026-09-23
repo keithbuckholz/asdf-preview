@@ -33,8 +33,7 @@ recommended array's PNG → posts it when ready. The UI never blocks on the imag
 
 ## 2. Why a persistent backend (not spawn-per-file)
 
-1. **Import cost is dominant and one-time.** Python + `asdf` (+ `astropy`, optionally
-   `roman_datamodels`) takes ~0.5–3 s to import depending on machine. A spawn-per-file
+1. **Import cost is dominant and one-time.** Python + `asdf` (+ `astropy`) takes ~0.5–3 s to import depending on machine. A spawn-per-file
    design pays this for *every* open; the whole point of "well under a second, especially
    on repeat opens" is impossible without persistence.
 2. **Parsed files are expensive and reusable.** An `asdf.open()` of a 100 MB WFI frame
@@ -97,7 +96,6 @@ Rules:
 
 ```jsonc
 { "python": "3.14.7", "asdf": "5.3.1" | null, "numpy": "2.5.2",
-  "has_roman_datamodels": false,
   "stretch_backend": "astropy ZScaleInterval" | "percentile(2-98) fallback",
   "capabilities": { "stretches": ["zscale","linear","percentile","manual"],
                     "cmaps": ["gray"] },   // cmaps: matplotlib's names when installed
@@ -113,7 +111,7 @@ Rules:
   "mtime_ns": 1718000000000000000,
   "title": "wfi_image",                          // from schema_uri, else file stem
   "schema_uri": "http://stsci.edu/schemas/roman/wfi_image-1.0.0" | null,
-  "opened_with": "asdf" | "roman_datamodels",
+  "opened_with": "asdf",
   "asdf_version": "5.3.1",
   "tree": <TreeNode>,                            // see 3.3
   "truncated": false,                            // node cap hit during serialization?
@@ -179,7 +177,7 @@ they are encoded as `"value": null, "representation": "NaN" | "Infinity" | "-Inf
 |---|---|---|
 | `E_BAD_REQUEST` | server | bad params / unknown method |
 | `E_FILE_NOT_FOUND` | server | path missing / not a regular file |
-| `E_PARSE` | server | asdf/roman_datamodels couldn't parse (message includes the cause) |
+| `E_PARSE` | server | asdf couldn't parse (message includes the cause) |
 | `E_NO_ASDLIB` | server | backend's interpreter lacks `asdf` → webview shows install hint |
 | `E_NO_ARRAY` | server | no 2-D array at requested path / in file |
 | `E_BAD_ARRAY` | server | array exists but isn't previewable (ndim, dtype) |
@@ -279,7 +277,7 @@ describes the real data, not just the preview.
 | `test/host_sim.js` | the compiled TS manager against the real backend: python detection, spawn+handshake, crash (SIGKILL) → auto-respawn, restart command, editor-provider open/resolve/dispose + webview HTML | `node test/host_sim.js` (after `npm run compile`) |
 
 Suggested additions when you extend this: pytest for the imaging math (zrange invariants,
-stride factors), and a fixture with real Roman tags to exercise the roman_datamodels path.
+stride factors).
 
 ## 7a. Packaging (vsix)
 

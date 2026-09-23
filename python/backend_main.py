@@ -51,7 +51,6 @@ def h_status(_params):
         "python": sys.version.split()[0],
         "asdf": inspection._asdf_version(),  # None when the package is missing
         "numpy": _safe_attr("numpy", "__version__"),
-        "has_roman_datamodels": inspection.has_roman_datamodels(),
         "stretch_backend": (
             "astropy ZScaleInterval"
             if _find_spec_ok("astropy")

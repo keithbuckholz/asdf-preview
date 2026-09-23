@@ -26,6 +26,7 @@ import re
 import sys
 import uuid
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
@@ -40,8 +41,6 @@ from protocol import BackendError
 
 _ASDF = None          # cached module or None (checked once per process)
 _ASDF_CHECKED = False
-_ROMAN = None         # roman_datamodels module, or None
-_ROMAN_CHECKED = False
 
 
 def _ensure_asdf():
@@ -72,24 +71,6 @@ def _find_spec_ok(name: str) -> bool:
     except Exception:
         return False
 
-
-def _ensure_roman():
-    global _ROMAN, _ROMAN_CHECKED
-    if not _ROMAN_CHECKED:
-        _ROMAN = None
-        if _find_spec_ok("roman_datamodels"):
-            try:
-                import roman_datamodels  # type: ignore
-
-                _ROMAN = roman_datamodels
-            except Exception as exc:  # broken install -> behave as absent
-                protocol.log(f"roman_datamodels import failed, ignoring: {exc}")
-        _ROMAN_CHECKED = True
-    return _ROMAN
-
-
-def has_roman_datamodels() -> bool:
-    return _find_spec_ok("roman_datamodels")
 
 
 # astropy.units.Quantity is a subclass of ndarray, so it must be tested first
@@ -306,7 +287,7 @@ class FileRecord:
         self.path = ""
         self.mtime_ns = 0
         self.size_bytes = 0
-        self.source = "asdf"  # or "roman_datamodels"
+        self.source = "asdf" 
         self.closers: List[Any] = []  # things to .close() on eviction
         self.tree: Dict[str, Any] = {}  # live tree (holds the real ndarrays)
         self.record: Dict[str, Any] = {}
@@ -376,10 +357,6 @@ def _title_from_schema(schema_uri: Optional[str], fallback: str) -> str:
 
 def _open_asdf(path: str):
     """Open *path*; return (asffile, source, extra_closers).
-
-    Tries roman_datamodels first when available (it registers the Roman/JWST
-    tag mappings plain asdf does not know), falling back to asdf.open on any
-    problem -- never a hard dependency.
     """
     asdf = _ensure_asdf()
     if asdf is None:
@@ -388,26 +365,9 @@ def _open_asdf(path: str):
             "The 'asdf' Python package is not installed for the interpreter "
             f"running the backend ({sys.executable}).",
             hint="Install it with:  python -m pip install asdf\n"
-                 "Optional extras: astropy (proper zscale stretch), "
-                 "roman_datamodels (Roman-aware parsing).",
+                 "Optional extras: astropy (proper zscale stretch)",
         )
 
-    roman = _ensure_roman()
-    if roman is not None:
-        dm = None
-        try:
-            dm = roman.DataModel.open(path)
-            asffile = dm.to_asdf()  # AsdfFile with Roman tree structure intact
-            return asffile, "roman_datamodels", [asffile, dm]
-        except Exception as exc:
-            # Close the half-opened DataModel before falling back -- a leak
-            # here would pin file handles (and mmap'd blocks) for no reason.
-            if dm is not None:
-                try:
-                    dm.close()
-                except Exception:
-                    pass
-            protocol.log(f"roman_datamodels failed for {path}, using plain asdf: {exc}")
 
     result = asdf.open(path)
     return result, "asdf", [result]
@@ -417,7 +377,7 @@ _TAG_HINT = (
     "This file uses ASDF tags the backend interpreter cannot load yet "
     "(common for Roman/JWST products with gwcs WCS objects). Install the "
     "missing packages into that interpreter, e.g.:\n"
-    "    python -m pip install gwcs roman_datamodels\n"
+    "    python -m pip install gwcs\n"
     "then run 'ASDF Preview: Restart Python Backend' and retry."
 )
 
@@ -572,7 +532,7 @@ def find_array(tree: Any, dotted_path: str) -> Any:
             except (IndexError, TypeError, KeyError):
                 break
         else:
-            if isinstance(node, dict) and tok in node:
+            if isinstance(node, Mapping) and tok in node:
                 node = node[tok]
             else:
                 break

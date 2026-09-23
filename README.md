@@ -37,7 +37,6 @@ starts on first `.asdf` open and is then reused for every file you open.
 | `asdf` (pip) | required | the only hard dependency of the backend |
 | `numpy` (pip) | comes with `asdf` | |
 | `astropy` (pip) | optional | proper zscale stretch (falls back to 2–98 percentile) |
-| `roman_datamodels` (pip) | optional | Roman-aware parsing (tag handlers); clean fallback to plain `asdf` |
 | `Pillow` (pip) | optional | faster PNG encoding; **required** for non-gray colormaps — the built-in gray-only zlib writer is used otherwise |
 | `matplotlib` (pip) | optional | named colormaps (viridis, plasma, …); without it only `gray` renders |
 
@@ -52,7 +51,6 @@ starts on first `.asdf` open and is then reused for every file you open.
 python3 -m venv .venv
 ./.venv/bin/pip install asdf            # required
 ./.venv/bin/pip install astropy         # recommended: proper zscale
-./.venv/bin/pip install roman_datamodels asdf-astropy   # optional: Roman products
 ./.venv/bin/pip install pillow matplotlib     # optional: colormaps (+ faster PNG)
 #    (on Windows use .venv\Scripts\python instead of ./.venv/bin/python)
 
@@ -147,8 +145,7 @@ tags like `tag:stsci.edu:gwcs/...`. The webview shows this as a clear error
 with the fix.
 
 To add this capability, install into your python environment: \
-`pip install gwcs` for WCS objects \
-`pip install roman_datamodels` for Roman Space Telescope
+`pip install gwcs` for WCS objects
 
 Then `ASDF Preview: Restart Python Backend`.
 
@@ -159,7 +156,7 @@ Then `ASDF Preview: Restart Python Backend`.
 | Webview shows `E_NO_PYTHON` / `E_NO_ASDLIB` | Set `asdfPreview.pythonPath` to an interpreter that has `pip install asdf` done. |
 | Workbench error `Assertion Failed: Argument is undefined or null` when opening `.asdf` | An exception escaped the extension's editor resolver (historically a detached `webview.asWebviewUri` call; fixed in 0.1.2). The **ASDF Preview** output channel now logs the full stack — open View ▸ Output, pick "ASDF Preview", and check for a `resolveCustomEditor FAILED` line. If it still happens on ≥0.1.2, report that log. |
 | Nothing changed after installing/updating | Reload the window (`Developer: Reload Window`) so the in-memory extension matches disk. |
-| `E_PARSE … tag:…gwcs…` / unknown model type | Install `gwcs` (and/or `roman_datamodels`) into the backend interpreter, then restart the backend. |
+| `E_PARSE … tag:…gwcs…` / unknown model type | Install `gwcs` into the backend interpreter, then restart the backend. |
 | Tree appears but image says nothing to render | File genuinely has no 2-D array — the tree is still fully usable. |
 
 ## Testing
