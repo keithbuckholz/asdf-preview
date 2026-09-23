@@ -88,5 +88,8 @@
     "@types/vscode": "~1.85.0",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "ovsx": "^1.2.0"
   }
 }
