@@ -3,7 +3,7 @@
   "displayName": "ASDF Preview (Roman / JWST quick-look)",
   "description": "Opens .asdf files in a webview: collapsible metadata tree + zscale-stretched quick-look image, backed by a persistent local Python process.",
   "version": "1.0.0",
-  "publisher": "keithbuckholz",
+  "publisher": "KeithBuckholz",
   "author": {
     "name": "Keith Buckholz"
   },
