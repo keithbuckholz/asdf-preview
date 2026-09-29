@@ -411,7 +411,7 @@ def make_preview(
     """Full pipeline for one 2-D array. Returns a JSON-safe result dict."""
     if opts is None:
         opts = {"stretch": "zscale", "transfer": "linear", "cmap": "gray",
-                "vmin": None, "vmax": None}
+                "vmin": None, "vmax": None, "gamma": 1}
     node = find_array(tree, dotted_path)
     if is_quantity(node):
         arr_plain = np.asarray(node.value)
